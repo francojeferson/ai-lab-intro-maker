@@ -1,0 +1,269 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>GFT AI LAB — Intro</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow:wght@300;400;600;800&display=swap" rel="stylesheet">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #001225; overflow: hidden; }
+  canvas { display: block; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<img id="fluidcode" src="fluid code.jpg" style="display:none">
+<script>
+const canvas = document.getElementById('c');
+const ctx    = canvas.getContext('2d');
+canvas.width  = 1280;
+canvas.height = 720;
+const CX = canvas.width  / 2;
+const CY = canvas.height / 2;
+
+// ── Easing ────────────────────────────────────────────────────
+const easeOut3    = t => 1 - Math.pow(1 - t, 3);
+const easeOut4    = t => 1 - Math.pow(1 - t, 4);
+const easeInOut   = t => t < 0.5 ? 4*t*t*t : 1 - Math.pow(-2*t + 2, 3) / 2;
+const clamp01     = t => Math.max(0, Math.min(1, t));
+const prog        = (e, s, end) => clamp01((e - s) / (end - s));
+
+// ── Logo ──────────────────────────────────────────────────────
+// New logo.png: 1330×448, opaque light-gray background, GFT■ only
+const LOGO_SRC_W = 1330, LOGO_SRC_H = 448;
+const LOGO_DW    = 290;
+const LOGO_DH    = Math.round(LOGO_SRC_H * LOGO_DW / LOGO_SRC_W); // ≈98px
+
+let logoWhite = null;
+
+function bakeWhiteLogo(img) {
+    const oc = document.createElement('canvas');
+    oc.width = img.naturalWidth; oc.height = img.naturalHeight;
+    const oc2 = oc.getContext('2d');
+    oc2.drawImage(img, 0, 0);
+    const idata = oc2.getImageData(0, 0, oc.width, oc.height);
+    const d = idata.data;
+    // Sample background brightness from corner pixel
+    const bg = (d[0] + d[1] + d[2]) / 3; // ≈248
+    for (let i = 0; i < d.length; i += 4) {
+        const brightness = (d[i] + d[i+1] + d[i+2]) / 3;
+        // Dark pixels (logo shape) → opaque white; light pixels (bg) → transparent
+        const alpha = Math.max(0, Math.min(255, (bg - brightness) * 3.2));
+        d[i] = 255; d[i+1] = 255; d[i+2] = 255; d[i+3] = alpha;
+    }
+    oc2.putImageData(idata, 0, 0);
+    logoWhite = oc;
+}
+
+const logoImg = new Image();
+logoImg.onload = () => bakeWhiteLogo(logoImg);
+logoImg.src    = 'logo.png';
+
+// ── Fluid Code ────────────────────────────────────────────────
+// fluid code.jpg: 1920×1080, 3D ribbon visual, light-gray bg
+// Bake: extract structural shadows → white-on-transparent overlay
+let fluidCodeBaked = null;
+
+function bakeFluidCode(img) {
+    const oc = document.createElement('canvas');
+    oc.width = img.naturalWidth; oc.height = img.naturalHeight;
+    const o2 = oc.getContext('2d');
+    o2.drawImage(img, 0, 0);
+    // Sample background brightness from corner pixel before masking
+    const px0 = o2.getImageData(0, 0, 1, 1).data;
+    const bgColor = `rgb(${px0[0]},${px0[1]},${px0[2]})`;
+    const bg = (px0[0] + px0[1] + px0[2]) / 3;
+    // Erase the GFT brand logo + grid area printed in the top-left of the asset
+    o2.fillStyle = bgColor;
+    o2.fillRect(0, 0, 600, 350);
+    const idata = o2.getImageData(0, 0, oc.width, oc.height);
+    const d = idata.data;
+    for (let i = 0; i < d.length; i += 4) {
+        const brightness = (d[i] + d[i+1] + d[i+2]) / 3;
+        // Pixels darker than background = structural elements (ribbon shadows/depth)
+        const delta = bg - brightness;
+        const alpha = delta > 4 ? Math.min(255, (delta - 4) * 2.6) : 0;
+        d[i] = 255; d[i+1] = 255; d[i+2] = 255; d[i+3] = alpha;
+    }
+    o2.putImageData(idata, 0, 0);
+    fluidCodeBaked = oc;
+}
+
+const fluidImg = document.getElementById('fluidcode');
+if (fluidImg.complete && fluidImg.naturalWidth > 0) {
+    bakeFluidCode(fluidImg);
+} else {
+    fluidImg.onload = () => bakeFluidCode(fluidImg);
+}
+
+// ── Draw: Fluid Code background ───────────────────────────────
+function drawFluid(ms) {
+    if (!fluidCodeBaked) return;
+    ctx.save();
+    // Scale to fill canvas with 8% bleed to allow drift without blank edges
+    const scale = (canvas.width * 1.08) / fluidCodeBaked.width;
+    const dw = fluidCodeBaked.width  * scale;  // ~1382
+    const dh = fluidCodeBaked.height * scale;  // ~778
+    // Slow sinusoidal drift
+    const driftX = Math.sin(ms * 0.00018) * 28;
+    const driftY = Math.cos(ms * 0.00013) * 14;
+    const dx = (canvas.width  - dw) / 2 + driftX;
+    const dy = (canvas.height - dh) / 2 + driftY;
+    ctx.globalAlpha = 0.44;
+    ctx.drawImage(fluidCodeBaked, dx, dy, dw, dh);
+    ctx.restore();
+}
+
+// ── Ambient glow behind logo ──────────────────────────────────
+function drawGlow(logoY, intensity) {
+    if (intensity <= 0) return;
+    ctx.save();
+    const gx = CX, gy = logoY + LOGO_DH * 0.4;
+    const glow = ctx.createRadialGradient(gx, gy, 0, gx, gy, 280);
+    glow.addColorStop(0,   `rgba(82,153,226,${0.12 * intensity})`);
+    glow.addColorStop(0.5, `rgba(30,80,140,${0.08 * intensity})`);
+    glow.addColorStop(1,   'rgba(0,0,0,0)');
+    ctx.fillStyle = glow;
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.restore();
+}
+
+// ── Main draw ─────────────────────────────────────────────────
+function draw(ms) {
+    // Base background
+    ctx.fillStyle = '#001225';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    // Radial depth vignette
+    const vign = ctx.createRadialGradient(CX, CY, 0, CX, CY, 720);
+    vign.addColorStop(0, 'rgba(0,28,60,0)');
+    vign.addColorStop(1, 'rgba(0,0,0,0.60)');
+    ctx.fillStyle = vign;
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    // Fluid Code asset — fades in over first 800ms
+    const fluidAlpha = clamp01(ms / 800);
+    ctx.save();
+    ctx.globalAlpha = fluidAlpha;
+    drawFluid(ms);
+    ctx.restore();
+
+    // Dark corner overlay to suppress any residual marks from the fluid code source asset
+    ctx.save();
+    const tlMask = ctx.createRadialGradient(0, 0, 30, 0, 0, 280);
+    tlMask.addColorStop(0,   `rgba(0,18,37,0.95)`);
+    tlMask.addColorStop(0.6, `rgba(0,18,37,0.50)`);
+    tlMask.addColorStop(1,    'rgba(0,0,0,0)');
+    ctx.fillStyle = tlMask;
+    ctx.fillRect(0, 0, 280, 280);
+    ctx.restore();
+
+    // Second vignette pass to darken edges over fluid code
+    const vign2 = ctx.createRadialGradient(CX, CY * 0.9, 80, CX, CY, 680);
+    vign2.addColorStop(0,   'rgba(0,0,0,0)');
+    vign2.addColorStop(0.5, 'rgba(0,10,25,0.15)');
+    vign2.addColorStop(1,   'rgba(0,0,0,0.55)');
+    ctx.fillStyle = vign2;
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    // ── Layout ────────────────────────────────────────────────
+    const logoX = CX - LOGO_DW / 2;
+    const logoY = CY - LOGO_DH / 2 - 36;
+    const lineY = logoY + LOGO_DH + 20;
+    const labY  = lineY + 42;
+
+    // ── Logo: left-to-right wipe reveal (350 → 1200ms) ───────
+    const logoWipeP = easeInOut(prog(ms, 350, 1200));
+    drawGlow(logoY, logoWipeP);
+
+    if (logoWipeP > 0 && logoWhite) {
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(logoX - 4, logoY - 4, LOGO_DW * logoWipeP + 4, LOGO_DH + 8);
+        ctx.clip();
+        ctx.globalAlpha = Math.min(1, logoWipeP * 2);
+        ctx.drawImage(logoWhite, logoX, logoY, LOGO_DW, LOGO_DH);
+        ctx.restore();
+    }
+
+    // ── Shimmer sweep across logo (950 → 1500ms) ─────────────
+    const shimP = prog(ms, 950, 1500);
+    if (shimP > 0 && shimP < 1 && logoWhite) {
+        const shimX = logoX + LOGO_DW * shimP;
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(logoX, logoY, LOGO_DW, LOGO_DH);
+        ctx.clip();
+        const sg = ctx.createLinearGradient(shimX - 120, 0, shimX + 120, 0);
+        sg.addColorStop(0,   'rgba(255,255,255,0)');
+        sg.addColorStop(0.5, 'rgba(255,255,255,0.32)');
+        sg.addColorStop(1,   'rgba(255,255,255,0)');
+        ctx.fillStyle = sg;
+        ctx.fillRect(shimX - 120, logoY, 240, LOGO_DH);
+        ctx.restore();
+    }
+
+    // ── Separator line (1200 → 1650ms) ───────────────────────
+    const lineP = easeInOut(prog(ms, 1200, 1650));
+    if (lineP > 0) {
+        ctx.save();
+        ctx.globalAlpha = lineP * 0.30;
+        ctx.fillStyle = '#FFFFFF';
+        ctx.fillRect(CX - 160 * lineP, lineY, 320 * lineP, 1);
+        ctx.restore();
+    }
+
+    // ── "AI LAB" — scale+fade reveal (1550 → 2500ms) ─────────
+    const labP     = easeOut4(prog(ms, 1550, 2500));
+    const labScale = 1 + (1 - labP) * 0.12;
+    const labOffY  = (1 - labP) * 20;
+
+    if (labP > 0) {
+        ctx.save();
+        ctx.globalAlpha = labP;
+        ctx.translate(CX, labY + labOffY);
+        ctx.scale(labScale, labScale);
+        ctx.fillStyle    = '#FFFFFF';
+        ctx.font         = '300 58px "Barlow", sans-serif';
+        ctx.textAlign    = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.letterSpacing = '14px';
+        ctx.fillText('AI LAB', 0, 0);
+        ctx.restore();
+    }
+
+    // ── Global fade-in from black (0 → 350ms) ────────────────
+    const fadeIn = clamp01(ms / 350);
+    if (fadeIn < 1) {
+        ctx.save();
+        ctx.globalAlpha = 1 - fadeIn;
+        ctx.fillStyle   = '#000000';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.restore();
+    }
+
+    // ── Fade to black at end (3100 → 3500ms) ─────────────────
+    const fadeOut = easeInOut(prog(ms, 3100, 3500));
+    if (fadeOut > 0) {
+        ctx.save();
+        ctx.globalAlpha = fadeOut;
+        ctx.fillStyle   = '#000000';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.restore();
+    }
+}
+
+window.__drawFrame = draw;
+
+let _start = null;
+function loop(ts) {
+    if (!_start) _start = ts;
+    draw(ts - _start);
+    requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
