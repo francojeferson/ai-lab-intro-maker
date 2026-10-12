@@ -6,6 +6,9 @@ updates:
       interval: "semiannually"
     open-pull-requests-limit: 3
     groups:
+      seguranca:
+        applies-to: security-updates
+        patterns: ["*"]
       npm:
         patterns: ["*"]
         update-types: ["minor", "patch"]
